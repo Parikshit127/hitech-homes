@@ -35,6 +35,14 @@ const AdminSidebar = ({ currentPage, setCurrentPage }) => {
     return () => document.removeEventListener("keydown", handleEscape);
   }, [isOpen]);
 
+  // Auto-open sidebar when an admin page is active (so clicking e.g. "Enquiries" shows it)
+  useEffect(() => {
+    const adminPages = ["admin-dashboard", "admin-enquiries", "add-property"];
+    if (currentPage && adminPages.includes(currentPage)) {
+      setIsOpen(true);
+    }
+  }, [currentPage]);
+
   return (
     <>
       {/* ===== HAMBURGER MENU BUTTON (Always Visible) ===== */}
