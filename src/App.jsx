@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, useContext } from "react";
 import { AuthProvider } from "./context/AuthContext";
 import { PropertyProvider } from "./context/PropertyContext";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
+import Chatbot from "./components/Chatbot";
+import { PropertyContext } from "./context/PropertyContext";
 import Home from "./pages/Home";
 import Listings from "./pages/Listings";
 import PropertyDetails from "./pages/PropertyDetails";
@@ -76,10 +78,19 @@ function App() {
           )}
           {renderPage()}
           {showFooter && <Footer setCurrentPage={setCurrentPage} />}
-          {/* {showFooter && <Chatbot properties={context.properties || []} />} */}
+          {showFooter && (
+            <ChatbotWrapper setCurrentPage={setCurrentPage} setSelectedProperty={setSelectedProperty} />
+          )}
         </div>
       </PropertyProvider>
     </AuthProvider>
+  );
+}
+
+function ChatbotWrapper({ setCurrentPage, setSelectedProperty }) {
+  const { properties } = useContext(PropertyContext);
+  return (
+    <Chatbot properties={properties} setCurrentPage={setCurrentPage} setSelectedProperty={setSelectedProperty} />
   );
 }
 

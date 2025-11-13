@@ -1,18 +1,29 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useContext } from "react";
 import { MessageCircle, X, Send, Bot, User } from "lucide-react";
+import { PropertyContext } from "../context/PropertyContext";
 
-export default function Chatbot({ properties = [] }) {
+export default function Chatbot({ properties: propsProperties = [], setCurrentPage, setSelectedProperty }) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([
     {
       role: "assistant",
       content:
-        "Hi! I'm your Hi-Tech Homes assistant. I can help you find properties, answer questions about listings, pricing, locations, and more. How can I help you today?",
+        "Welcome to Hi-Tech Homes — I can help you find properties. Click 'Find listings' below to start a quick search.",
     },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef(null);
+  // Guided flow state
+  const [flowStep, setFlowStep] = useState("idle");
+  const [selectedCity, setSelectedCity] = useState("");
+  const [selectedFilter, setSelectedFilter] = useState(""); // 'bhk' or 'area'
+  const [selectedBhk, setSelectedBhk] = useState("");
+  const [areaValue, setAreaValue] = useState("");
+
+  // Use properties from context if not passed as prop
+  const ctx = useContext(PropertyContext);
+  const properties = Array.isArray(propsProperties) && propsProperties.length > 0 ? propsProperties : (ctx?.properties || []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -190,6 +201,73 @@ Important: Always be helpful and encourage users to contact the team for persona
     }
   };
 
+  // --- Guided flow helpers ---
+  const uniqueCities = [...new Set((properties || []).map((p) => p.city))].filter(Boolean);
+
+  const startFindFlow = () => {
+    setFlowStep("chooseCity");
+    setMessages((m) => [...m, { role: "assistant", content: "Great — first, please choose your preferred location:" }]);
+  };
+
+  const chooseCity = (city) => {
+    setSelectedCity(city);
+    setFlowStep("chooseFilter");
+    setMessages((m) => [...m, { role: "user", content: city }, { role: "assistant", content: `Got it — ${city}. Do you want to filter by bedrooms or by area (sq.ft)?` }]);
+  };
+
+  const chooseFilter = (filter) => {
+    setSelectedFilter(filter);
+    if (filter === "bhk") {
+      setFlowStep("chooseBhk");
+      setMessages((m) => [...m, { role: "user", content: "Bedrooms" }, { role: "assistant", content: "How many bedrooms? Choose from available options:" }]);
+    } else {
+      setFlowStep("chooseArea");
+      setMessages((m) => [...m, { role: "user", content: "Area" }, { role: "assistant", content: "Enter desired minimum square feet (e.g. 500):" }]);
+    }
+  };
+
+  const chooseBhk = (bhk) => {
+    setSelectedBhk(bhk);
+    // filter properties and show results
+    const results = (properties || []).filter((p) => p.city === selectedCity && String(p.bhk) === String(bhk));
+    showResults(results, `No listings found for ${bhk} BHK in ${selectedCity}.`);
+    setFlowStep("results");
+    setMessages((m) => [...m, { role: "user", content: `${bhk} BHK` }]);
+  };
+
+  const chooseAreaSubmit = () => {
+    const num = parseFloat(areaValue);
+    if (Number.isNaN(num) || num <= 0) {
+      alert("Please enter a valid number for square feet.");
+      return;
+    }
+    const results = (properties || []).filter((p) => p.city === selectedCity && parseFloat(p.area || 0) >= num);
+    showResults(results, `No listings found >= ${num} sq.ft in ${selectedCity}.`);
+    setFlowStep("results");
+    setMessages((m) => [...m, { role: "user", content: `${num} sq.ft` }]);
+  };
+
+  const showResults = (results, noneMessage) => {
+    if (!results || results.length === 0) {
+      setMessages((m) => [...m, { role: "assistant", content: noneMessage + " Please contact us for help." }]);
+    } else {
+      const summary = results
+        .slice(0, 5)
+        .map((r) => `${r.title} — ${r.bhk} BHK — ${r.area} sq.ft — ₹${r.price?.toLocaleString("en-IN")}`)
+        .join("\n\n");
+      setMessages((m) => [...m, { role: "assistant", content: `Found ${results.length} matching listings:\n\n${summary}` }]);
+    }
+  };
+
+  const viewProperty = (propertyId) => {
+    const prop = (properties || []).find((p) => p._id === propertyId);
+    if (prop) {
+      setSelectedProperty && setSelectedProperty(prop);
+      setCurrentPage && setCurrentPage("property-details");
+      setIsOpen(false);
+    }
+  };
+
   return (
     <>
       {/* Chat Button */}
@@ -243,13 +321,32 @@ Important: Always be helpful and encourage users to contact the team for persona
                   </div>
                 )}
                 <div
-                  className={`max-w-[75%] p-3 rounded-2xl ${
+                  className={`max-w-[75%] p-3 rounded-2xl shadow-sm ${
                     msg.role === "user"
                       ? "bg-gradient-to-r from-sky-500 to-sky-600 text-white"
                       : "bg-white border border-gray-200 text-gray-800"
                   }`}
                 >
                   <p className="text-sm whitespace-pre-line">{msg.content}</p>
+                  {/* If assistant sent result summary with listings, render small cards */}
+                  {msg.role === 'assistant' && msg.content?.startsWith('Found') && (
+                    <div className="mt-3 grid grid-cols-1 gap-2">
+                      {/** Parse content lines into items (best-effort). If properties available, prefer showing first matching properties from context. **/}
+                      {(properties || []).slice(0, 5).map((p) => (
+                        <div key={p._id} className="flex items-center gap-3 p-2 border rounded">
+                          <img src={p.images?.[0]?.secure_url || p.image || '/favicon.ico'} alt={p.title} className="w-16 h-12 object-cover rounded" />
+                          <div className="flex-1">
+                            <div className="font-semibold text-sm">{p.title}</div>
+                            <div className="text-xs text-gray-500">{p.bhk} BHK • {p.area} sq.ft</div>
+                            <div className="text-sm font-medium">₹{p.price?.toLocaleString('en-IN')}</div>
+                          </div>
+                          <div>
+                            <button onClick={() => viewProperty(p._id)} className="px-3 py-1 bg-sky-600 text-white rounded text-xs">View</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 {msg.role === "user" && (
                   <div className="w-8 h-8 bg-sky-600 rounded-full flex items-center justify-center flex-shrink-0">
@@ -281,12 +378,9 @@ Important: Always be helpful and encourage users to contact the team for persona
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input */}
-          <form
-            onSubmit={handleSubmit}
-            className="p-4 bg-white border-t border-gray-200"
-          >
-            <div className="flex gap-2">
+          {/* Input and quick actions area (integrated) */}
+          <div className="p-3 bg-white border-t border-gray-200">
+            <div className="flex gap-2 mb-2">
               <input
                 type="text"
                 value={input}
@@ -296,16 +390,121 @@ Important: Always be helpful and encourage users to contact the team for persona
                 disabled={loading}
               />
               <button
-                type="submit"
+                type="button"
+                onClick={handleSubmit}
                 disabled={loading || !input.trim()}
                 className="bg-gradient-to-r from-sky-500 to-sky-600 text-white p-2 rounded-full hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Send size={20} />
               </button>
             </div>
-          </form>
+
+            {/* Quick flow controls inline */}
+            <div className="flex flex-wrap gap-2">
+              {flowStep === 'idle' && (
+                <button onClick={startFindFlow} className="px-3 py-1 bg-sky-100 rounded">Find listings</button>
+              )}
+
+              {flowStep === 'chooseCity' && (
+                uniqueCities.map((c) => (
+                  <button key={c} onClick={() => chooseCity(c)} className="px-3 py-1 bg-sky-50 border rounded text-sm">{c}</button>
+                ))
+              )}
+
+              {flowStep === 'chooseFilter' && (
+                <>
+                  <button onClick={() => chooseFilter('bhk')} className="px-3 py-1 bg-sky-50 border rounded text-sm">Bedrooms</button>
+                  <button onClick={() => chooseFilter('area')} className="px-3 py-1 bg-sky-50 border rounded text-sm">Area</button>
+                </>
+              )}
+
+              {flowStep === 'chooseBhk' && (
+                [...new Set((properties||[]).filter(p=>p.city===selectedCity).map(p=>p.bhk))].filter(Boolean).map((b) => (
+                  <button key={b} onClick={() => chooseBhk(b)} className="px-3 py-1 bg-sky-50 border rounded text-sm">{b} BHK</button>
+                ))
+              )}
+
+              {flowStep === 'chooseArea' && (
+                <div className="flex gap-2 items-center">
+                  <input value={areaValue} onChange={(e)=>setAreaValue(e.target.value)} placeholder="min sq.ft" className="px-2 py-1 border rounded text-sm w-28" />
+                  <button onClick={chooseAreaSubmit} className="px-3 py-1 bg-sky-50 border rounded text-sm">Search</button>
+                </div>
+              )}
+
+              {flowStep === 'results' && (
+                <button onClick={()=>{ setCurrentPage && setCurrentPage('listings'); setIsOpen(false); }} className="px-3 py-1 bg-green-100 rounded text-sm">Go to Listings</button>
+              )}
+            </div>
+          </div>
         </div>
       )}
+          {/* Guided flow quick actions area (when open) */}
+          {isOpen && (
+            <div style={{ position: 'fixed', bottom: 20, right: 24, zIndex: 60 }}>
+              {/* Render quick flow controls below the chat window */}
+              <div className="w-96 max-w-[calc(100vw-3rem)]">
+                {flowStep === 'idle' && (
+                  <div className="p-3 flex gap-2 justify-center">
+                    <button onClick={startFindFlow} className="px-4 py-2 bg-blue-600 text-white rounded">Find listings</button>
+                  </div>
+                )}
+
+                {flowStep === 'chooseCity' && (
+                  <div className="p-3 bg-white rounded shadow space-y-2">
+                    <div className="font-semibold">Choose a location</div>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {uniqueCities.length === 0 && <div className="text-sm text-gray-500">No cities available</div>}
+                      {uniqueCities.map((c) => (
+                        <button key={c} onClick={() => chooseCity(c)} className="px-3 py-1 bg-sky-100 rounded">{c}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {flowStep === 'chooseFilter' && (
+                  <div className="p-3 bg-white rounded shadow">
+                    <div className="font-semibold">Filter by</div>
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={() => chooseFilter('bhk')} className="px-3 py-1 bg-sky-100 rounded">Bedrooms</button>
+                      <button onClick={() => chooseFilter('area')} className="px-3 py-1 bg-sky-100 rounded">Area (sq.ft)</button>
+                    </div>
+                  </div>
+                )}
+
+                {flowStep === 'chooseBhk' && (
+                  <div className="p-3 bg-white rounded shadow">
+                    <div className="font-semibold">Choose bedrooms</div>
+                    <div className="flex gap-2 mt-2">
+                      {[...new Set((properties||[]).filter(p=>p.city===selectedCity).map(p=>p.bhk))].filter(Boolean).map((b) => (
+                        <button key={b} onClick={() => chooseBhk(b)} className="px-3 py-1 bg-sky-100 rounded">{b} BHK</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {flowStep === 'chooseArea' && (
+                  <div className="p-3 bg-white rounded shadow">
+                    <div className="font-semibold">Enter minimum sq.ft</div>
+                    <div className="flex gap-2 mt-2">
+                      <input value={areaValue} onChange={(e)=>setAreaValue(e.target.value)} placeholder="e.g. 500" className="px-3 py-1 border rounded flex-1" />
+                      <button onClick={chooseAreaSubmit} className="px-3 py-1 bg-sky-100 rounded">Search</button>
+                    </div>
+                  </div>
+                )}
+
+                {flowStep === 'results' && (
+                  <div className="p-3 bg-white rounded shadow">
+                    <div className="font-semibold">Results</div>
+                    <div className="mt-2 text-sm text-gray-600">Use the chat above to see a summary. You can also go to Listings or Contact us.</div>
+                    <div className="mt-3 flex gap-2">
+                      <button onClick={()=>{ setCurrentPage && setCurrentPage('listings'); setIsOpen(false); }} className="px-3 py-1 bg-green-100 rounded">Go to Listings</button>
+                      <button onClick={()=>{ setCurrentPage && setCurrentPage('contact'); setIsOpen(false); }} className="px-3 py-1 bg-yellow-100 rounded">Contact Us</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
     </>
   );
 }
